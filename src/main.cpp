@@ -13,6 +13,7 @@
 #include <string>
 #include <fstream>
 #include <vector>
+#include <algorithm>
 #include "utils.h"
 
 #include <math.h>
@@ -39,6 +40,7 @@ float lastFrame = 0.0f;
 GLuint vao;
 GLuint vbo;
 GLuint instanceVbo;
+GLuint radiusVbo;
 GLuint program;
 int num_points;
 
@@ -90,6 +92,9 @@ int main()
 
     auto pcl = readPly("models/scene0_anim2.ply");
 
+    std::cout << "Max radius" << *std::max_element(pcl.radius.begin(), pcl.radius.end()) << std::endl;
+    std::cout << "Min radius" << *std::min_element(pcl.radius.begin(), pcl.radius.end()) << std::endl;
+
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetScrollCallback(window, scroll_callback);
@@ -136,6 +141,9 @@ int main()
 
     glDeleteProgram(program);
     glDeleteBuffers(1, &vbo);
+    glDeleteBuffers(1, &instanceVbo);
+    glDeleteBuffers(1, &radiusVbo);
+
     return 0;
 }
 
@@ -163,7 +171,7 @@ std::string readFromFile(const std::string &path)
 void initBuffers(const PointCloud &pcl)
 {
 
-    auto circle = buildCircle(100, 0.005f);
+    auto circle = buildCircle(100, 1.0f);
 
     num_points = circle.size();
 
@@ -183,6 +191,14 @@ void initBuffers(const PointCloud &pcl)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
     glEnableVertexAttribArray(1);
     glVertexAttribDivisor(1, 1);
+
+    glGenBuffers(1, &radiusVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, radiusVbo);
+    glBufferData(GL_ARRAY_BUFFER, pcl.radius.size() * sizeof(float), pcl.radius.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void *) 0);
+    glEnableVertexAttribArray(2);
+    glVertexAttribDivisor(2, 1);
     glBindVertexArray(0);
 }
 
