@@ -1,2 +1,2 @@
 libs/* linguist-vendored
-src/glad.c
+src/glad.c linguist-vendored
