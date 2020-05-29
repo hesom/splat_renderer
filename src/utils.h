@@ -72,3 +72,4 @@ struct float3 { float x, y, z; };
 struct double3 { double x, y, z; };
 struct uint3 { uint32_t x, y, z; };
 struct uint4 { uint32_t x, y, z, w; };
+struct uchar3 { unsigned char r, g, b; };

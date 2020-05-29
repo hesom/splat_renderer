@@ -30,7 +30,7 @@ void processInput(GLFWwindow *window);
 GLenum glCheckError_(const char *file, int line);
 #define glCheckError() glCheckError_(__FILE__, __LINE__)
 
-Camera camera(glm::vec3(0.0f, 0.0f, 0.0f));
+Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 float lastX = (float)WIDTH / 2.0;
 float lastY = (float)HEIGHT / 2.0;
 bool firstMouse = true;
@@ -41,13 +41,14 @@ GLuint vao;
 GLuint vbo;
 GLuint instanceVbo;
 GLuint radiusVbo;
+GLuint colorVbo;
 GLuint program;
 int num_points;
 
 struct PointCloud
 {
     std::vector<float3> position;
-    std::vector<float3> color;
+    std::vector<uchar3> color;
     std::vector<float3> normal;
     std::vector<float> confidence;
     std::vector<float> radius;
@@ -199,6 +200,15 @@ void initBuffers(const PointCloud &pcl)
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void *) 0);
     glEnableVertexAttribArray(2);
     glVertexAttribDivisor(2, 1);
+
+    glGenBuffers(1, &colorVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, colorVbo);
+    glBufferData(GL_ARRAY_BUFFER, pcl.color.size() * sizeof(uchar3), pcl.color.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(3, 3, GL_UNSIGNED_BYTE, GL_TRUE, 3*sizeof(unsigned char), (void *) 0);
+    glEnableVertexAttribArray(3);
+    glVertexAttribDivisor(3, 1);
+    
     glBindVertexArray(0);
 }
 
