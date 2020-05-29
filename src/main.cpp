@@ -128,7 +128,7 @@ int main()
         // render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        auto projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, 0.1f, 1000.0f);
+        auto projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, 0.01f, 8.0f);
         auto view = camera.GetViewMatrix();
 
         glUseProgram(program);
