@@ -149,6 +149,9 @@ int main()
     glDeleteBuffers(1, &vbo);
     glDeleteBuffers(1, &instanceVbo);
     glDeleteBuffers(1, &radiusVbo);
+    glDeleteBuffers(1, &colorVbo);
+    glDeleteBuffers(1, &normalVbo);
+    glDeleteVertexArrays(1, &vao);
 
     return 0;
 }
