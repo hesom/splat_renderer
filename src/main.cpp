@@ -42,11 +42,11 @@ GLenum glCheckError_(const char *file, int line);
 #define glCheckError() glCheckError_(__FILE__, __LINE__)
 
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-float lastX = (float)WIDTH / 2.0;
-float lastY = (float)HEIGHT / 2.0;
+double lastX = static_cast<double>(WIDTH) / 2.0;
+double lastY = static_cast<double>(HEIGHT) / 2.0;
 bool firstMouse = true;
-float deltaTime = 0.0f;
-float lastFrame = 0.0f;
+double deltaTime = 0.0f;
+double lastFrame = 0.0f;
 
 GLuint vao;
 GLuint vbo;
@@ -55,7 +55,7 @@ GLuint radiusVbo;
 GLuint normalVbo;
 GLuint colorVbo;
 GLuint program;
-int num_points;
+size_t num_points;
 
 struct PointCloud
 {
@@ -125,7 +125,7 @@ int main()
 
     while (!glfwWindowShouldClose(window))
     {
-        float currentFrame = glfwGetTime();
+        double currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
@@ -377,8 +377,8 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos)
         firstMouse = false;
     }
 
-    float xoffset = xpos - lastX;
-    float yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
+    double xoffset = xpos - lastX;
+    double yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
 
     lastX = xpos;
     lastY = ypos;
@@ -527,7 +527,7 @@ PointCloud readPly(const std::string &filepath)
         file.read(*file_stream);
         read_timer.stop();
 
-        const float parsing_time = read_timer.get() / 1000.f;
+        const double parsing_time = read_timer.get() / 1000.f;
         std::cout << "\tparsing " << size_mb << "mb in " << parsing_time << " seconds [" << (size_mb / parsing_time) << " MBps]" << std::endl;
 
         if (position)
@@ -586,5 +586,6 @@ PointCloud readPly(const std::string &filepath)
     catch (const std::exception &e)
     {
         std::cerr << e.what() << '\n';
+        exit(1);
     }
 }
