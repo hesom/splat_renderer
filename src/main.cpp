@@ -14,6 +14,7 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
+#include <future>
 #include "utils.h"
 
 #include <math.h>
@@ -510,27 +511,44 @@ PointCloud readPly(const std::string &filepath)
 
         PointCloud pcl;
 
-        size_t numVerticesBytes = position->buffer.size_bytes();
         pcl.position.resize(position->count);
-        std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
-
-        numVerticesBytes = normal->buffer.size_bytes();
         pcl.normal.resize(normal->count);
-        std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
-
-        numVerticesBytes = color->buffer.size_bytes();
         pcl.color.resize(color->count);
-        std::memcpy(pcl.color.data(), color->buffer.get(), numVerticesBytes);
-
-        numVerticesBytes = confidence->buffer.size_bytes();
         pcl.confidence.resize(confidence->count);
-        std::memcpy(pcl.confidence.data(), confidence->buffer.get(), numVerticesBytes);
-
-        numVerticesBytes = radius->buffer.size_bytes();
         pcl.radius.resize(radius->count);
-        std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
-        pcl.size = pcl.position.size();
 
+        auto t1 = std::async(std::launch::async, [&]() {
+            size_t numVerticesBytes = position->buffer.size_bytes();
+            std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
+        });
+
+        auto t2 = std::async(std::launch::async, [&]() {
+            size_t numVerticesBytes = normal->buffer.size_bytes();
+            std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
+        });
+
+        auto t3 = std::async(std::launch::async, [&]() {
+            size_t numVerticesBytes = color->buffer.size_bytes();
+            std::memcpy(pcl.color.data(), color->buffer.get(), numVerticesBytes);
+        });
+
+        auto t4 = std::async(std::launch::async, [&]() {
+            size_t numVerticesBytes = confidence->buffer.size_bytes();
+            std::memcpy(pcl.confidence.data(), confidence->buffer.get(), numVerticesBytes);
+        });
+
+        auto t5 = std::async(std::launch::async, [&]() {
+            size_t numVerticesBytes = radius->buffer.size_bytes();
+            std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
+        });
+
+        t1.get();
+        t2.get();
+        t3.get();
+        t4.get();
+        t5.get();
+
+        pcl.size = pcl.position.size();
         return pcl;
     }
     catch (const std::exception &e)
