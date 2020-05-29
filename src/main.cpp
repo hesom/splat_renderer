@@ -64,7 +64,7 @@ struct PointCloud
     std::vector<float3> normal;
     std::vector<float> confidence;
     std::vector<float> radius;
-    float size;
+    size_t size;
 };
 
 std::string readFromFile(const std::string &path);
