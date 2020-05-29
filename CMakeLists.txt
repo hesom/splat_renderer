@@ -15,6 +15,7 @@ endif()
 set(LIB_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs)
 
 add_subdirectory(${LIB_ROOT_DIR}/glfw)
+add_subdirectory(${LIB_ROOT_DIR}/tinyply)
 
 file(GLOB_RECURSE SRC "src/*.cpp" "src/*.c")
 
@@ -22,6 +23,7 @@ add_executable(splat_renderer ${SRC})
 
 include_directories(splat_renderer
   ${LIB_ROOT_DIR}/glfw/include
+  ${LIB_ROOT_DIR}/tinyply/source
   ${LIB_ROOT_DIR}/glad
   ${LIB_ROOT_DIR}/KHR
   ${LIB_ROOT_DIR}/glm
@@ -33,4 +35,4 @@ find_package(OpenGL REQUIRED)
 target_compile_definitions(splat_renderer PRIVATE GLFW_INCLUDE_NONE)
 
 target_link_libraries(splat_renderer ${OPENGL_gl_LIBRARY})
-target_link_libraries(splat_renderer glfw)
+target_link_libraries(splat_renderer glfw tinyply)

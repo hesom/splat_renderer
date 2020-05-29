@@ -6,12 +6,14 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <tinyply.h>
 
 #include <stdexcept>
 #include <memory>
 #include <string>
 #include <fstream>
 #include <vector>
+#include "utils.h"
 
 #include <math.h>
 
@@ -20,12 +22,12 @@
 const int WIDTH = 1280;
 const int HEIGHT = 720;
 
-void framebuffer_size_callback(GLFWwindow* window, int width, int height);
-void mouse_callback(GLFWwindow* window, double xpos, double ypos);
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+void framebuffer_size_callback(GLFWwindow *window, int width, int height);
+void mouse_callback(GLFWwindow *window, double xpos, double ypos);
+void scroll_callback(GLFWwindow *window, double xoffset, double yoffset);
 void processInput(GLFWwindow *window);
 GLenum glCheckError_(const char *file, int line);
-#define glCheckError() glCheckError_(__FILE__, __LINE__) 
+#define glCheckError() glCheckError_(__FILE__, __LINE__)
 
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f));
 float lastX = (float)WIDTH / 2.0;
@@ -40,27 +42,28 @@ GLuint instanceVbo;
 GLuint program;
 int num_points;
 
-std::vector<float> positions = {
-    0.0f, 0.0f, -1.0f,
-    0.0f, -0.5f, -1.0f,
-    0.0f, 0.5f, -1.0f,
-    -0.5f, 0.0f, -1.0f,
-    0.5f, 0.0f, -1.0f,
-    -0.5f, -0.5f, -1.0f,
-    0.5f, 0.5f, -1.0f,
-    -0.5f, 0.5f, -1.0f,
-    0.5f, -0.5f, -1.0f,
+struct PointCloud
+{
+    std::vector<float3> position;
+    std::vector<float3> color;
+    std::vector<float3> normal;
+    std::vector<float> confidence;
+    std::vector<float> radius;
+    float size;
 };
 
 std::string readFromFile(const std::string &path);
 void writeMat(const glm::mat4 &mat);
+PointCloud readPly(const std::string &filepath);
 
-void initBuffers();
+void initBuffers(const PointCloud &pcl);
 void initShaders();
 bool checkShader(GLuint shaderId, GLuint type);
 bool checkProgram(GLuint program);
 
 std::vector<float> buildCircle(int fans, float radius);
+
+using namespace tinyply;
 
 int main()
 {
@@ -85,6 +88,8 @@ int main()
         throw std::runtime_error("Failed to create window");
     }
 
+    auto pcl = readPly("models/scene0_anim2.ply");
+
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetScrollCallback(window, scroll_callback);
@@ -97,7 +102,7 @@ int main()
     glfwGetFramebufferSize(window, &width, &height);
     glViewport(0, 0, width, height);
 
-    initBuffers();
+    initBuffers(pcl);
     initShaders();
 
     while (!glfwWindowShouldClose(window))
@@ -112,16 +117,15 @@ int main()
         // render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        auto projection = glm::perspective(glm::radians(90.0f), (float)width / (float)height, 0.1f, 1000.0f);
+        auto projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, 0.1f, 1000.0f);
         auto view = camera.GetViewMatrix();
 
         glUseProgram(program);
         glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(projection[0]));
         glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(view[0]));
-        glCheckError();
 
         glBindVertexArray(vao);
-        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, num_points, positions.size() / 3);
+        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, num_points, pcl.size);
 
         // swap buffers and poll IO events
         glfwSwapBuffers(window);
@@ -156,10 +160,10 @@ std::string readFromFile(const std::string &path)
     return content;
 }
 
-void initBuffers()
+void initBuffers(const PointCloud &pcl)
 {
 
-    auto circle = buildCircle(100, 0.1f);
+    auto circle = buildCircle(100, 0.005f);
 
     num_points = circle.size();
 
@@ -174,7 +178,7 @@ void initBuffers()
 
     glGenBuffers(1, &instanceVbo);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVbo);
-    glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(float), positions.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, pcl.position.size() * sizeof(float3), pcl.position.data(), GL_STATIC_DRAW);
 
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
     glEnableVertexAttribArray(1);
@@ -360,4 +364,139 @@ void writeMat(const glm::mat4 &mat)
     std::cout << mat[2][0] << "," << mat[2][1] << "," << mat[2][2] << "," << mat[2][3] << std::endl;
     std::cout << mat[3][0] << "," << mat[3][1] << "," << mat[3][2] << "," << mat[3][3] << std::endl;
     std::cout << std::endl;
+}
+
+PointCloud readPly(const std::string &filepath)
+{
+    std::unique_ptr<std::istream> file_stream;
+    std::vector<uint8_t> byte_buffer;
+    try
+    {
+        byte_buffer = read_file_binary(filepath);
+        file_stream.reset(new memory_stream((char *)byte_buffer.data(), byte_buffer.size()));
+
+        if (!file_stream || file_stream->fail())
+            throw std::runtime_error("file_stream failed to open " + filepath);
+
+        file_stream->seekg(0, std::ios::end);
+        const float size_mb = file_stream->tellg() * float(1e-6);
+        file_stream->seekg(0, std::ios::beg);
+
+        PlyFile file;
+        file.parse_header(*file_stream);
+
+        std::cout << "\t[ply_header] Type: " << (file.is_binary_file() ? "binary" : "ascii") << std::endl;
+        for (const auto &c : file.get_comments())
+            std::cout << "\t[ply_header] Comment: " << c << std::endl;
+        for (const auto &c : file.get_info())
+            std::cout << "\t[ply_header] Info: " << c << std::endl;
+
+        for (const auto &e : file.get_elements())
+        {
+            std::cout << "\t[ply_header] element: " << e.name << " (" << e.size << ")" << std::endl;
+            for (const auto &p : e.properties)
+            {
+                std::cout << "\t[ply_header] \tproperty: " << p.name << " (type=" << tinyply::PropertyTable[p.propertyType].str << ")";
+                if (p.isList)
+                    std::cout << " (list_type=" << tinyply::PropertyTable[p.listType].str << ")";
+                std::cout << std::endl;
+            }
+        }
+
+        std::shared_ptr<PlyData> position, normal, color, confidence, radius;
+
+        try
+        {
+            position = file.request_properties_from_element("vertex", {"x", "y", "z"});
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "tinyply exception: " << e.what() << std::endl;
+        }
+
+        try
+        {
+            normal = file.request_properties_from_element("vertex", {"nx", "ny", "nz"});
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "tinyply exception: " << e.what() << std::endl;
+        }
+
+        try
+        {
+            color = file.request_properties_from_element("vertex", {"red", "green", "blue"});
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "tinyply exception: " << e.what() << std::endl;
+        }
+
+        try
+        {
+            confidence = file.request_properties_from_element("vertex", {"confidence"});
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "tinyply exception: " << e.what() << std::endl;
+        }
+
+        try
+        {
+            radius = file.request_properties_from_element("vertex", {"radius"});
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "tinyply exception: " << e.what() << std::endl;
+        }
+
+        manual_timer read_timer;
+
+        read_timer.start();
+        file.read(*file_stream);
+        read_timer.stop();
+
+        const float parsing_time = read_timer.get() / 1000.f;
+        std::cout << "\tparsing " << size_mb << "mb in " << parsing_time << " seconds [" << (size_mb / parsing_time) << " MBps]" << std::endl;
+
+        if (position)
+            std::cout << "\tRead " << position->count << " total vertices " << std::endl;
+        if (normal)
+            std::cout << "\tRead " << normal->count << " total vertex normals " << std::endl;
+        if (color)
+            std::cout << "\tRead " << color->count << " total vertex colors " << std::endl;
+        if (confidence)
+            std::cout << "\tRead " << confidence->count << " total confidence counters " << std::endl;
+        if (radius)
+            std::cout << "\tRead " << radius->count << " total point radii " << std::endl;
+
+        PointCloud pcl;
+
+        size_t numVerticesBytes = position->buffer.size_bytes();
+        pcl.position.resize(position->count);
+        std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
+
+        numVerticesBytes = normal->buffer.size_bytes();
+        pcl.normal.resize(normal->count);
+        std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
+
+        numVerticesBytes = color->buffer.size_bytes();
+        pcl.color.resize(color->count);
+        std::memcpy(pcl.color.data(), color->buffer.get(), numVerticesBytes);
+
+        numVerticesBytes = confidence->buffer.size_bytes();
+        pcl.confidence.resize(confidence->count);
+        std::memcpy(pcl.confidence.data(), confidence->buffer.get(), numVerticesBytes);
+
+        numVerticesBytes = radius->buffer.size_bytes();
+        pcl.radius.resize(radius->count);
+        std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
+        pcl.size = pcl.position.size();
+
+        return pcl;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << e.what() << '\n';
+    }
 }
