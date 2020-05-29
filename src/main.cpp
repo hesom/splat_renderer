@@ -41,6 +41,7 @@ GLuint vao;
 GLuint vbo;
 GLuint instanceVbo;
 GLuint radiusVbo;
+GLuint normalVbo;
 GLuint colorVbo;
 GLuint program;
 int num_points;
@@ -107,6 +108,7 @@ int main()
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
     glViewport(0, 0, width, height);
+    glEnable(GL_DEPTH_TEST);
 
     initBuffers(pcl);
     initShaders();
@@ -197,7 +199,7 @@ void initBuffers(const PointCloud &pcl)
     glBindBuffer(GL_ARRAY_BUFFER, radiusVbo);
     glBufferData(GL_ARRAY_BUFFER, pcl.radius.size() * sizeof(float), pcl.radius.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void *) 0);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void *)0);
     glEnableVertexAttribArray(2);
     glVertexAttribDivisor(2, 1);
 
@@ -205,10 +207,18 @@ void initBuffers(const PointCloud &pcl)
     glBindBuffer(GL_ARRAY_BUFFER, colorVbo);
     glBufferData(GL_ARRAY_BUFFER, pcl.color.size() * sizeof(uchar3), pcl.color.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(3, 3, GL_UNSIGNED_BYTE, GL_TRUE, 3*sizeof(unsigned char), (void *) 0);
+    glVertexAttribPointer(3, 3, GL_UNSIGNED_BYTE, GL_TRUE, 3 * sizeof(unsigned char), (void *)0);
     glEnableVertexAttribArray(3);
     glVertexAttribDivisor(3, 1);
-    
+
+    glGenBuffers(1, &normalVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, normalVbo);
+    glBufferData(GL_ARRAY_BUFFER, pcl.normal.size() * sizeof(float3), pcl.normal.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_TRUE, 3 * sizeof(float), (void *)0);
+    glEnableVertexAttribArray(4);
+    glVertexAttribDivisor(4, 1);
+
     glBindVertexArray(0);
 }
 
