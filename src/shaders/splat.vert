@@ -25,7 +25,7 @@ mat4 rotationMatrix(vec3 axis, float angle)
 
 void main()
 {
-    vec3 currOrientation = vec3(0.0, 0.0, 1.0); // straight to the front
+    vec3 currOrientation = vec3(0.0, 0.0, -1.0); // straight to the front
     vec3 axis = cross(normal, currOrientation);
     float theta = acos(dot(currOrientation, normalize(normal)));
 

@@ -21,8 +21,18 @@
 
 #include "camera.h"
 
-const int WIDTH = 1280;
-const int HEIGHT = 720;
+// Camera params for projection
+const int WIDTH = 640;
+const int HEIGHT = 480;
+
+const float FX = 528.0f;
+const float FY = 528.0f;
+const float CX = 320.0f;
+const float CY = 240.0f;
+
+// Near and far clipping planes in m
+const float NEAR = 0.01f;
+const float FAR = 8.0f;
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void mouse_callback(GLFWwindow *window, double xpos, double ypos);
@@ -106,9 +116,6 @@ int main()
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
-    int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
-    glViewport(0, 0, width, height);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -128,7 +135,29 @@ int main()
         // render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        auto projection = glm::perspective(glm::radians(60.0f), (float)width / (float)height, 0.01f, 8.0f);
+        glm::mat4 m(0.0f);
+        m[0][0] = 2.0f * FX / WIDTH;
+        m[0][1] = 0.0f;
+        m[0][2] = 0.0f;
+        m[0][3] = 0.0f;
+
+        m[1][0] = 0.0f;
+        m[1][1] = -2.0f * FY / HEIGHT;
+        m[1][2] = 0.0f;
+        m[1][3] = 0.0f;
+
+        m[2][0] = 1.0f - 2.0f * CX / WIDTH;
+        m[2][1] = 2.0f * CY / HEIGHT - 1.0f;
+        m[2][2] = (FAR + NEAR) / (NEAR - FAR);
+        m[2][3] = -1.0f;
+
+        m[3][0] = 0.0f;
+        m[3][1] = 0.0f;
+        m[3][2] = 2.0f * FAR * NEAR / (NEAR - FAR);
+        m[3][3] = 0.0f;
+
+        auto projection = m;
+
         auto view = camera.GetViewMatrix();
 
         glUseProgram(program);
