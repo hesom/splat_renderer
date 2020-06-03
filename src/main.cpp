@@ -35,7 +35,7 @@ const float CY = 240.0f;
 
 // Near and far clipping planes in m
 const float NEAR = 0.01f;
-const float FAR = 8.0f;
+const float FAR = 30.0f;
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void mouse_callback(GLFWwindow *window, double xpos, double ypos);
@@ -58,7 +58,8 @@ GLuint instanceVbo;
 GLuint radiusVbo;
 GLuint normalVbo;
 GLuint colorVbo;
-GLuint pbos[NUM_PBOS];
+GLuint colorPbos[NUM_PBOS];
+GLuint depthPbos[NUM_PBOS];
 GLuint program;
 size_t num_points;
 
@@ -112,6 +113,7 @@ int main()
     auto pcl = readPly("models/scene0_anim2.ply");
     auto trajectory = loadTrajectoryFromFile("models/scene0_anim2.freiburg");
     std::vector<GLubyte*> rgbBuffers;
+    std::vector<float*> depthBuffers;
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
@@ -171,12 +173,14 @@ int main()
         glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, num_points, pcl.size);
         if (numDownloads < NUM_PBOS)
         {
-            glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[dx]);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[dx]);
             glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[dx]);
+            glReadPixels(0, 0, WIDTH, HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
         }
         else
         {
-            glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[dx]);
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[dx]);
             GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
             if (ptr)
             {
@@ -187,10 +191,24 @@ int main()
             }
             else
             {
-                std::cerr << "Could not map PBO" << std::endl;
+                std::cerr << "Could not map color PBO" << std::endl;
             }
-
             glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[dx]);
+            float* ptr2 = (float*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+            if (ptr2)
+            {
+                float* cpuBuffer = new float[WIDTH * HEIGHT];
+                memcpy(cpuBuffer, ptr2, WIDTH * HEIGHT*sizeof(float));
+                depthBuffers.push_back(cpuBuffer);
+                glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            }
+            else
+            {
+                std::cerr << "Could not map depth PBO" << std::endl;
+            }
+            glReadPixels(0, 0, WIDTH, HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
         }
 
         dx = (dx + 1) % NUM_PBOS;
@@ -203,16 +221,48 @@ int main()
     }
     
     for (int i = 0; i < rgbBuffers.size(); i++) {
-        auto fileName = "output/" + std::to_string(i) + ".png";
+        auto fileNameColor = "output/rgb/" + std::to_string(i) + ".png";
+        auto fileNameDepth = "output/depth/" + std::to_string(i) + ".png";
         std::async(std::launch::async, [&]() {
             // flip image
-            GLubyte* tmp = new GLubyte[WIDTH * HEIGHT * 3];
+            GLubyte* tmpColor = new GLubyte[WIDTH * HEIGHT * 3];
             for (int row = 0; row < HEIGHT; row++)
             {
-                memcpy(&tmp[row * WIDTH * 3], &rgbBuffers.at(i)[(HEIGHT - row-1) * WIDTH * 3], WIDTH*3);
+                memcpy(&tmpColor[row * WIDTH * 3], &rgbBuffers.at(i)[(HEIGHT - row-1) * WIDTH * 3], WIDTH*3);
             }
-            lodepng::encode(fileName, tmp, WIDTH, HEIGHT, LCT_RGB, 8U);
-            delete[] tmp;
+            lodepng::encode(fileNameColor, tmpColor, WIDTH, HEIGHT, LCT_RGB, 8U);
+            delete[] tmpColor;
+
+            float* tmpDepth = new float[WIDTH * HEIGHT];
+            unsigned char* tmpDepthBytes = new unsigned char[WIDTH * HEIGHT * 2];
+            for (int row = 0; row < HEIGHT; row++)
+            {
+                memcpy(&tmpDepth[row * WIDTH], &depthBuffers.at(i)[(HEIGHT - row - 1) * WIDTH], WIDTH * sizeof(float));
+            }
+            for (int j = 0; j < WIDTH * HEIGHT; j++)
+            {
+                float d = tmpDepth[j];
+                if (d > 0.0f && d < 1.0f)
+                {
+                    d = (2.0f * d) - 1.0f;
+                    d = (2.0f * NEAR * FAR) / (FAR + NEAR - (d*(FAR - NEAR)));
+                }
+                else
+                {
+                    d = 0.0f;
+                }
+                // d is not in meters so convert it to mm
+                d *= 1000;
+                // we do not have sub milimeter accuracy so we can savely convert d to uint16_t
+                uint16_t bytes = d;
+                unsigned char lsb = bytes & 0xff;
+                unsigned char msb = bytes >> 8;
+                tmpDepthBytes[2*j + 0] = msb;
+                tmpDepthBytes[2*j + 1] = lsb;
+            }
+            lodepng::encode(fileNameDepth, tmpDepthBytes, WIDTH, HEIGHT, LCT_GREY, 16U);
+            delete[] tmpDepth;
+            delete[] tmpDepthBytes;
             }
         );
     }
@@ -225,10 +275,16 @@ int main()
     glDeleteBuffers(1, &radiusVbo);
     glDeleteBuffers(1, &colorVbo);
     glDeleteBuffers(1, &normalVbo);
-    glDeleteBuffers(NUM_PBOS, pbos);
+    glDeleteBuffers(NUM_PBOS, colorPbos);
+    glDeleteBuffers(NUM_PBOS, depthPbos);
     glDeleteVertexArrays(1, &vao);
 
     for (auto& buffer : rgbBuffers)
+    {
+        delete[] buffer;
+    }
+
+    for (auto& buffer : depthBuffers)
     {
         delete[] buffer;
     }
@@ -307,12 +363,15 @@ void initBuffers(const PointCloud &pcl)
     glBindVertexArray(0);
 
     // Set up pbos for efficient pixel transfers
-    glGenBuffers(NUM_PBOS, pbos);
+    glGenBuffers(NUM_PBOS, colorPbos);
+    glGenBuffers(NUM_PBOS, depthPbos);
     int nbytes = WIDTH * HEIGHT * 3;
     for (int i = 0; i < NUM_PBOS; i++)
     {
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[i]);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[i]);
         glBufferData(GL_PIXEL_PACK_BUFFER, nbytes, nullptr, GL_STREAM_READ);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[i]);
+        glBufferData(GL_PIXEL_PACK_BUFFER, WIDTH*HEIGHT*sizeof(float), nullptr, GL_STREAM_READ);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 }
