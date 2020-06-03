@@ -22,8 +22,7 @@
 
 #include "camera.h"
 #include "utils.h"
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include "lodepng.h"
 
 // Camera params for projection
 const int WIDTH = 640;
@@ -212,7 +211,7 @@ int main()
             {
                 memcpy(&tmp[row * WIDTH * 3], &rgbBuffers.at(i)[(HEIGHT - row-1) * WIDTH * 3], WIDTH*3);
             }
-            stbi_write_png(fileName.c_str(), WIDTH, HEIGHT, 3, tmp, 0); 
+            lodepng::encode(fileName, tmp, WIDTH, HEIGHT, LCT_RGB, 8U);
             delete[] tmp;
             }
         );
