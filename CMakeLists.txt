@@ -17,7 +17,7 @@ set(LIB_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs)
 add_subdirectory(${LIB_ROOT_DIR}/glfw)
 add_subdirectory(${LIB_ROOT_DIR}/tinyply)
 
-file(GLOB_RECURSE SRC "src/*.cpp" "src/*.c")
+file(GLOB_RECURSE SRC "src/*.cpp" "src/*.c" "src/*.h" "src/shaders/*")
 
 add_executable(splat_renderer ${SRC})
 
