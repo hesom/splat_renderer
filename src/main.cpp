@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <tinyply.h>
 
 #include <stdexcept>
@@ -47,6 +49,7 @@ double lastY = static_cast<double>(HEIGHT) / 2.0;
 bool firstMouse = true;
 double deltaTime = 0.0f;
 double lastFrame = 0.0f;
+int frame = 0;
 
 GLuint vao;
 GLuint vbo;
@@ -77,6 +80,7 @@ bool checkShader(GLuint shaderId, GLuint type);
 bool checkProgram(GLuint program);
 
 std::vector<float> buildCircle(int fans, float radius);
+std::vector<glm::mat4> loadTrajectoryFromFile(std::string path);
 
 using namespace tinyply;
 
@@ -104,6 +108,7 @@ int main()
     }
 
     auto pcl = readPly("models/scene0_anim2.ply");
+    auto trajectory = loadTrajectoryFromFile("models/scene0_anim2.freiburg");
 
     std::cout << "Max radius" << *std::max_element(pcl.radius.begin(), pcl.radius.end()) << std::endl;
     std::cout << "Min radius" << *std::min_element(pcl.radius.begin(), pcl.radius.end()) << std::endl;
@@ -111,7 +116,6 @@ int main()
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetScrollCallback(window, scroll_callback);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
@@ -123,7 +127,7 @@ int main()
     initBuffers(pcl);
     initShaders();
 
-    while (!glfwWindowShouldClose(window))
+    for (const auto &view : trajectory)
     {
         double currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -131,7 +135,6 @@ int main()
 
         // input
         processInput(window);
-
         // render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -157,9 +160,6 @@ int main()
         m[3][3] = 0.0f;
 
         auto projection = m;
-
-        auto view = camera.GetViewMatrix();
-
         glUseProgram(program);
         glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(projection[0]));
         glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(view[0]));
@@ -359,6 +359,10 @@ void processInput(GLFWwindow *window)
         camera.ProcessKeyboard(LEFT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.ProcessKeyboard(RIGHT, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS)
+        frame = (frame + 1) % 499;
+    if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS)
+        frame = frame == 0 ? 498 : frame - 1;
 }
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height)
@@ -552,11 +556,17 @@ PointCloud readPly(const std::string &filepath)
         auto t1 = std::async(std::launch::async, [&]() {
             size_t numVerticesBytes = position->buffer.size_bytes();
             std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
+            std::transform(pcl.position.begin(), pcl.position.end(), pcl.position.begin(), [](float3 position) {
+                return float3{-position.x, position.y, position.z};
+            });
         });
 
         auto t2 = std::async(std::launch::async, [&]() {
             size_t numVerticesBytes = normal->buffer.size_bytes();
             std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
+            std::transform(pcl.normal.begin(), pcl.normal.end(), pcl.normal.begin(), [](float3 normal) {
+                return float3{-normal.x, normal.y, normal.z};
+            });
         });
 
         auto t3 = std::async(std::launch::async, [&]() {
@@ -588,4 +598,35 @@ PointCloud readPly(const std::string &filepath)
         std::cerr << e.what() << '\n';
         exit(1);
     }
+}
+
+std::vector<glm::mat4> loadTrajectoryFromFile(std::string path)
+{
+    std::vector<glm::mat4> trajectory;
+    std::ifstream ifs;
+    float timestamp, tx, ty, tz, qx, qy, qz, qw;
+
+    ifs.open(path);
+    if (!ifs)
+    {
+        throw std::runtime_error("Unable to open trajectory file");
+        exit(1);
+    }
+
+    // transform the trajectory into the right basis for our application
+    auto coordinateTransform = glm::mat4({-1.0f, 0.0f, 0.0f, 0.0f,
+                                          0.0f, 1.0f, 0.0f, 0.0f,
+                                          0.0f, 0.0f, -1.0f, 0.0f,
+                                          0.0f, 0.0f, 0.0f, 1.0f});
+
+    while (ifs >> timestamp >> tx >> ty >> tz >> qx >> qy >> qz >> qw)
+    {
+        auto rotationQuat = glm::quat(qw, -qx, -qy, qz);
+        auto rotationMat = glm::transpose(glm::toMat4(rotationQuat));
+        auto translationMat = glm::translate(glm::mat4(1.0f), -glm::vec3(tx, ty, -tz));
+        auto transform = rotationMat * translationMat;
+        trajectory.push_back(transform * coordinateTransform);
+    }
+
+    return trajectory;
 }
