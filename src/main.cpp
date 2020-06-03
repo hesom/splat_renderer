@@ -17,11 +17,13 @@
 #include <vector>
 #include <algorithm>
 #include <future>
-#include "utils.h"
 
 #include <math.h>
 
 #include "camera.h"
+#include "utils.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 // Camera params for projection
 const int WIDTH = 640;
@@ -49,7 +51,7 @@ double lastY = static_cast<double>(HEIGHT) / 2.0;
 bool firstMouse = true;
 double deltaTime = 0.0f;
 double lastFrame = 0.0f;
-int frame = 0;
+const size_t NUM_PBOS = 3;  //triple buffering
 
 GLuint vao;
 GLuint vbo;
@@ -57,6 +59,7 @@ GLuint instanceVbo;
 GLuint radiusVbo;
 GLuint normalVbo;
 GLuint colorVbo;
+GLuint pbos[NUM_PBOS];
 GLuint program;
 size_t num_points;
 
@@ -109,9 +112,7 @@ int main()
 
     auto pcl = readPly("models/scene0_anim2.ply");
     auto trajectory = loadTrajectoryFromFile("models/scene0_anim2.freiburg");
-
-    std::cout << "Max radius" << *std::max_element(pcl.radius.begin(), pcl.radius.end()) << std::endl;
-    std::cout << "Min radius" << *std::min_element(pcl.radius.begin(), pcl.radius.end()) << std::endl;
+    std::vector<GLubyte*> rgbBuffers;
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
@@ -127,7 +128,9 @@ int main()
     initBuffers(pcl);
     initShaders();
 
-    for (const auto &view : trajectory)
+    size_t numDownloads = 0;
+    size_t dx = 0;
+    for (int frame = 0; frame<trajectory.size(); frame+=25)
     {
         double currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -160,16 +163,59 @@ int main()
         m[3][3] = 0.0f;
 
         auto projection = m;
+        auto view = trajectory.at(frame);
         glUseProgram(program);
         glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(projection[0]));
         glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(view[0]));
 
         glBindVertexArray(vao);
         glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, num_points, pcl.size);
+        if (numDownloads < NUM_PBOS)
+        {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[dx]);
+            glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+        }
+        else
+        {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[dx]);
+            GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+            if (ptr)
+            {
+                GLubyte* cpuBuffer = new GLubyte[3*WIDTH*HEIGHT];
+                memcpy(cpuBuffer, ptr, 3 * WIDTH * HEIGHT);
+                rgbBuffers.push_back(cpuBuffer);
+                glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            }
+            else
+            {
+                std::cerr << "Could not map PBO" << std::endl;
+            }
+
+            glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+        }
+
+        dx = (dx + 1) % NUM_PBOS;
+        numDownloads++;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
         // swap buffers and poll IO events
         glfwSwapBuffers(window);
         glfwPollEvents();
+    }
+    
+    for (int i = 0; i < rgbBuffers.size(); i++) {
+        auto fileName = "output/" + std::to_string(i) + ".png";
+        std::async(std::launch::async, [&]() {
+            // flip image
+            GLubyte* tmp = new GLubyte[WIDTH * HEIGHT * 3];
+            for (int row = 0; row < HEIGHT; row++)
+            {
+                memcpy(&tmp[row * WIDTH * 3], &rgbBuffers.at(i)[(HEIGHT - row-1) * WIDTH * 3], WIDTH*3);
+            }
+            stbi_write_png(fileName.c_str(), WIDTH, HEIGHT, 3, tmp, 0); 
+            delete[] tmp;
+            }
+        );
     }
 
     glfwTerminate();
@@ -180,7 +226,13 @@ int main()
     glDeleteBuffers(1, &radiusVbo);
     glDeleteBuffers(1, &colorVbo);
     glDeleteBuffers(1, &normalVbo);
+    glDeleteBuffers(NUM_PBOS, pbos);
     glDeleteVertexArrays(1, &vao);
+
+    for (auto& buffer : rgbBuffers)
+    {
+        delete[] buffer;
+    }
 
     return 0;
 }
@@ -208,7 +260,6 @@ std::string readFromFile(const std::string &path)
 
 void initBuffers(const PointCloud &pcl)
 {
-
     auto circle = buildCircle(100, 1.0f);
 
     num_points = circle.size();
@@ -255,6 +306,16 @@ void initBuffers(const PointCloud &pcl)
     glVertexAttribDivisor(4, 1);
 
     glBindVertexArray(0);
+
+    // Set up pbos for efficient pixel transfers
+    glGenBuffers(NUM_PBOS, pbos);
+    int nbytes = WIDTH * HEIGHT * 3;
+    for (int i = 0; i < NUM_PBOS; i++)
+    {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[i]);
+        glBufferData(GL_PIXEL_PACK_BUFFER, nbytes, nullptr, GL_STREAM_READ);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 }
 
 void initShaders()
@@ -359,10 +420,6 @@ void processInput(GLFWwindow *window)
         camera.ProcessKeyboard(LEFT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.ProcessKeyboard(RIGHT, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS)
-        frame = (frame + 1) % 499;
-    if (glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS)
-        frame = frame == 0 ? 498 : frame - 1;
 }
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height)
