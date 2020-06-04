@@ -225,6 +225,39 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+
+    // read remaining pbos
+    for(int pbo = 0; pbo < NUM_PBOS; pbo++)
+    {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[pbo]);
+        GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+        if (ptr)
+        {
+            GLubyte* cpuBuffer = new GLubyte[3*WIDTH*HEIGHT];
+            memcpy(cpuBuffer, ptr, 3 * WIDTH * HEIGHT);
+            rgbBuffers.push_back(cpuBuffer);
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        else
+        {
+            std::cerr << "Could not map color PBO" << std::endl;
+        }
+        glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[pbo]);
+        float* ptr2 = (float*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+        if (ptr2)
+        {
+            float* cpuBuffer = new float[WIDTH * HEIGHT];
+            memcpy(cpuBuffer, ptr2, WIDTH * HEIGHT*sizeof(float));
+            depthBuffers.push_back(cpuBuffer);
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        else
+        {
+            std::cerr << "Could not map depth PBO" << std::endl;
+        }
+    }
     
     for (int i = 0; i < rgbBuffers.size(); i++) {
         std::filesystem::create_directories(outputPath + "/rgb");
