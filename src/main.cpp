@@ -230,7 +230,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         std::filesystem::create_directories(outputPath + "/rgb");
         std::filesystem::create_directories(outputPath + "/depth");
         std::ostringstream ss;
-        ss << std::setw(5) << std::setfill('0') << std::to_string(i);
+        ss << std::setw(5) << std::setfill('0') << std::to_string(i*delta);
         auto fileNameColor = outputPath + "/rgb/" + ss.str() + ".png";
         auto fileNameDepth = outputPath + "/depth/" + ss.str() + ".png";
         std::async(std::launch::async, [&]() {
