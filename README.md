@@ -13,7 +13,8 @@ pip install .
 from splat_renderer import render
 
 try:
-  render('point_cloud.ply', 'trajectory.freiburg', 'output_dir')
+  # only render every 25th camera position by default
+  render('point_cloud.ply', 'trajectory.freiburg', 'output_dir', delta=25)
 except Exception as e:
   print(e)
 ```
