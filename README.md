@@ -3,7 +3,7 @@ Simple tool for rendering point clouds with known normals and point sizes. Only 
 
 ## Installation
 ```
-git clone git@github.com:hesom/splat_renderer.git
+git clone --recursive git@github.com:hesom/splat_renderer.git
 cd splat_renderer
 pip install .
 ```
