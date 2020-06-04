@@ -1,6 +1,8 @@
 #define _USE_MATH_DEFINES
 
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <glad/glad.h>
 #include <glfw/glfw3.h>
 #include <glm/glm.hpp>
@@ -17,12 +19,16 @@
 #include <vector>
 #include <algorithm>
 #include <future>
+#include <filesystem>
+#include <pybind11/pybind11.h>
 
 #include <math.h>
 
 #include "camera.h"
 #include "utils.h"
 #include "lodepng.h"
+#include "splat.vert.h"
+#include "splat.frag.h"
 
 // Camera params for projection
 const int WIDTH = 640;
@@ -61,7 +67,6 @@ GLuint colorVbo;
 GLuint colorPbos[NUM_PBOS];
 GLuint depthPbos[NUM_PBOS];
 GLuint program;
-size_t num_points;
 
 struct PointCloud
 {
@@ -77,7 +82,7 @@ std::string readFromFile(const std::string &path);
 void writeMat(const glm::mat4 &mat);
 PointCloud readPly(const std::string &filepath);
 
-void initBuffers(const PointCloud &pcl);
+size_t initBuffers(const PointCloud &pcl);
 void initShaders();
 bool checkShader(GLuint shaderId, GLuint type);
 bool checkProgram(GLuint program);
@@ -86,11 +91,12 @@ std::vector<float> buildCircle(int fans, float radius);
 std::vector<glm::mat4> loadTrajectoryFromFile(std::string path);
 
 using namespace tinyply;
+namespace py = pybind11;
 
-int main()
+int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=25)
 {
     GLFWwindow *window;
-
+    
     if (!glfwInit())
     {
         throw std::runtime_error("Failed to initialize GLFW");
@@ -110,8 +116,8 @@ int main()
         throw std::runtime_error("Failed to create window");
     }
 
-    auto pcl = readPly("models/scene0_anim2.ply");
-    auto trajectory = loadTrajectoryFromFile("models/scene0_anim2.freiburg");
+    auto pcl = readPly(pointcloudPath);
+    auto trajectory = loadTrajectoryFromFile(trajectoryPath);
     std::vector<GLubyte*> rgbBuffers;
     std::vector<float*> depthBuffers;
 
@@ -126,12 +132,12 @@ int main()
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    initBuffers(pcl);
+    const auto pointsPerCircle = initBuffers(pcl);
     initShaders();
 
     size_t numDownloads = 0;
     size_t dx = 0;
-    for (int frame = 0; frame<trajectory.size(); frame+=25)
+    for (int frame = 0; frame<trajectory.size(); frame+=delta)
     {
         double currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -170,7 +176,7 @@ int main()
         glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(view[0]));
 
         glBindVertexArray(vao);
-        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, num_points, pcl.size);
+        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, pointsPerCircle, pcl.size);
         if (numDownloads < NUM_PBOS)
         {
             glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[dx]);
@@ -221,8 +227,12 @@ int main()
     }
     
     for (int i = 0; i < rgbBuffers.size(); i++) {
-        auto fileNameColor = "output/rgb/" + std::to_string(i) + ".png";
-        auto fileNameDepth = "output/depth/" + std::to_string(i) + ".png";
+        std::filesystem::create_directories(outputPath + "/rgb");
+        std::filesystem::create_directories(outputPath + "/depth");
+        std::ostringstream ss;
+        ss << std::setw(5) << std::setfill('0') << std::to_string(i);
+        auto fileNameColor = outputPath + "/rgb/" + ss.str() + ".png";
+        auto fileNameDepth = outputPath + "/depth/" + ss.str() + ".png";
         std::async(std::launch::async, [&]() {
             // flip image
             GLubyte* tmpColor = new GLubyte[WIDTH * HEIGHT * 3];
@@ -313,11 +323,11 @@ std::string readFromFile(const std::string &path)
     return content;
 }
 
-void initBuffers(const PointCloud &pcl)
+size_t initBuffers(const PointCloud &pcl)
 {
     auto circle = buildCircle(100, 1.0f);
 
-    num_points = circle.size();
+    size_t num_points = circle.size();
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
@@ -374,14 +384,15 @@ void initBuffers(const PointCloud &pcl)
         glBufferData(GL_PIXEL_PACK_BUFFER, WIDTH*HEIGHT*sizeof(float), nullptr, GL_STREAM_READ);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    return num_points;
 }
 
 void initShaders()
 {
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    auto vertexSource = readFromFile("src/shaders/splat.vert");
-    const char *vertexSource_c = vertexSource.c_str();
-    glShaderSource(vertexShader, 1, &vertexSource_c, nullptr);
+    const char* vertexSource = SPLAT_VERT_STR;
+    glShaderSource(vertexShader, 1, &vertexSource, nullptr);
     glCompileShader(vertexShader);
     if (!checkShader(vertexShader, GL_VERTEX_SHADER))
     {
@@ -389,9 +400,8 @@ void initShaders()
     }
 
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    auto fragmentSource = readFromFile("src/shaders/splat.frag");
-    const char *fragmentSource_c = fragmentSource.c_str();
-    glShaderSource(fragmentShader, 1, &fragmentSource_c, nullptr);
+    const char* fragmentSource = SPLAT_FRAG_STR;
+    glShaderSource(fragmentShader, 1, &fragmentSource, nullptr);
     glCompileShader(fragmentShader);
     if (!checkShader(fragmentShader, GL_FRAGMENT_SHADER))
     {
@@ -744,4 +754,21 @@ std::vector<glm::mat4> loadTrajectoryFromFile(std::string path)
     }
 
     return trajectory;
+}
+
+PYBIND11_MODULE(splat_renderer, m) {
+    m.doc() = R"pbdoc(
+        Splat rendering module
+    )pbdoc";
+
+    m.def("render", &render, R"pbdoc(
+        Render a point cloud from a given camera trajectory and save the result in the output directory.
+        Returns 0 if no errors were encountered. Throws runtime exceptions
+    )pbdoc", py::arg("pointcloud"), py::arg("trajectory"), py::arg("output"), py::arg("delta") = 25);
+
+    #ifdef VERSION_INFO
+    m.attr("__version__") = VERSION_INFO;
+    #else
+    m.attr("__version__") = "dev";
+    #endif
 }

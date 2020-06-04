@@ -1,9 +1,12 @@
 [submodule "libs/glfw"]
-	path = libs/glfw
+	path = dependencies/glfw
 	url = git@github.com:glfw/glfw.git
 [submodule "libs/glm"]
 	path = libs/glm
 	url = git@github.com:g-truc/glm.git
 [submodule "libs/tinyply"]
-	path = libs/tinyply
+	path = dependencies/tinyply
 	url = git@github.com:ddiakopoulos/tinyply.git
+[submodule "libs/pybind11"]
+	path = dependencies/pybind11
+	url = git@github.com:pybind/pybind11.git
