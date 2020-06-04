@@ -310,8 +310,6 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         );
     }
 
-    glfwTerminate();
-
     glDeleteProgram(program);
     glDeleteBuffers(1, &vbo);
     glDeleteBuffers(1, &instanceVbo);
@@ -321,6 +319,8 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     glDeleteBuffers(NUM_PBOS, colorPbos);
     glDeleteBuffers(NUM_PBOS, depthPbos);
     glDeleteVertexArrays(1, &vao);
+
+    glfwTerminate();
 
     for (auto& buffer : rgbBuffers)
     {
@@ -451,6 +451,8 @@ void initShaders()
         throw std::runtime_error("Shader linking failed");
     }
 
+    glDetachShader(program, vertexShader);
+    glDetachShader(program, fragmentShader);
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 }
