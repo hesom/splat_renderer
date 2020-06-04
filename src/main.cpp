@@ -229,7 +229,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     // read remaining pbos
     for(int pbo = 0; pbo < NUM_PBOS; pbo++)
     {
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[pbo]);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[dx]);
         GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
         if (ptr)
         {
@@ -244,7 +244,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         }
         glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
 
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[pbo]);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[dx]);
         float* ptr2 = (float*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
         if (ptr2)
         {
@@ -257,6 +257,8 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         {
             std::cerr << "Could not map depth PBO" << std::endl;
         }
+        dx = (dx + 1) % NUM_PBOS;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
     
     for (int i = 0; i < rgbBuffers.size(); i++) {
