@@ -622,6 +622,10 @@ PointCloud readPly(const std::string &filepath)
         PlyFile file;
         file.parse_header(*file_stream);
 
+        bool no_color = false;
+        bool no_confidence = false;
+        bool no_radius = false;
+
         std::cout << "\t[ply_header] Type: " << (file.is_binary_file() ? "binary" : "ascii") << std::endl;
         for (const auto &c : file.get_comments())
             std::cout << "\t[ply_header] Comment: " << c << std::endl;
@@ -642,23 +646,8 @@ PointCloud readPly(const std::string &filepath)
 
         std::shared_ptr<PlyData> position, normal, color, confidence, radius;
 
-        try
-        {
-            position = file.request_properties_from_element("vertex", {"x", "y", "z"});
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "tinyply exception: " << e.what() << std::endl;
-        }
-
-        try
-        {
-            normal = file.request_properties_from_element("vertex", {"nx", "ny", "nz"});
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "tinyply exception: " << e.what() << std::endl;
-        }
+        position = file.request_properties_from_element("vertex", {"x", "y", "z"});
+        normal = file.request_properties_from_element("vertex", {"nx", "ny", "nz"});
 
         try
         {
@@ -666,7 +655,7 @@ PointCloud readPly(const std::string &filepath)
         }
         catch (const std::exception &e)
         {
-            std::cerr << "tinyply exception: " << e.what() << std::endl;
+            no_color = true;
         }
 
         try
@@ -675,7 +664,7 @@ PointCloud readPly(const std::string &filepath)
         }
         catch (const std::exception &e)
         {
-            std::cerr << "tinyply exception: " << e.what() << std::endl;
+            no_confidence = true;
         }
 
         try
@@ -684,7 +673,7 @@ PointCloud readPly(const std::string &filepath)
         }
         catch (const std::exception &e)
         {
-            std::cerr << "tinyply exception: " << e.what() << std::endl;
+            no_radius = true;
         }
 
         manual_timer read_timer;
@@ -710,10 +699,10 @@ PointCloud readPly(const std::string &filepath)
         PointCloud pcl;
 
         pcl.position.resize(position->count);
-        pcl.normal.resize(normal->count);
-        pcl.color.resize(color->count);
-        pcl.confidence.resize(confidence->count);
-        pcl.radius.resize(radius->count);
+        pcl.normal.resize(position->count);
+        pcl.color.resize(position->count);
+        pcl.confidence.resize(position->count);
+        pcl.radius.resize(position->count);
 
         auto t1 = std::async(std::launch::async, [&]() {
             size_t numVerticesBytes = position->buffer.size_bytes();
@@ -732,18 +721,30 @@ PointCloud readPly(const std::string &filepath)
         });
 
         auto t3 = std::async(std::launch::async, [&]() {
-            size_t numVerticesBytes = color->buffer.size_bytes();
-            std::memcpy(pcl.color.data(), color->buffer.get(), numVerticesBytes);
+            if(no_color){
+                pcl.color.assign(pcl.color.size(), {1, 1, 1});
+            }else{
+                size_t numVerticesBytes = color->buffer.size_bytes();
+                std::memcpy(pcl.color.data(), color->buffer.get(), numVerticesBytes);
+            }
         });
 
         auto t4 = std::async(std::launch::async, [&]() {
-            size_t numVerticesBytes = confidence->buffer.size_bytes();
-            std::memcpy(pcl.confidence.data(), confidence->buffer.get(), numVerticesBytes);
+            if(no_confidence){
+                pcl.confidence.assign(pcl.confidence.size(), 1.0f);
+            }else{
+                size_t numVerticesBytes = confidence->buffer.size_bytes();
+                std::memcpy(pcl.confidence.data(), confidence->buffer.get(), numVerticesBytes);
+            }
         });
 
         auto t5 = std::async(std::launch::async, [&]() {
-            size_t numVerticesBytes = radius->buffer.size_bytes();
-            std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
+            if(no_radius){
+                pcl.radius.assign(pcl.radius.size(), 1.0f);
+            }else{
+                size_t numVerticesBytes = radius->buffer.size_bytes();
+                std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
+            }
         });
 
         t1.get();
