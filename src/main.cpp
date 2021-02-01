@@ -19,7 +19,8 @@
 #include <vector>
 #include <algorithm>
 #include <future>
-#include <filesystem>
+#define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#include <experimental/filesystem>
 #include <pybind11/pybind11.h>
 
 #include <math.h>
@@ -92,6 +93,7 @@ std::vector<glm::mat4> loadTrajectoryFromFile(std::string path);
 
 using namespace tinyply;
 namespace py = pybind11;
+namespace fs = std::experimental::filesystem;
 
 int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=25)
 {
@@ -262,8 +264,8 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     }
     
     for (int i = 0; i < rgbBuffers.size(); i++) {
-        std::filesystem::create_directories(outputPath + "/rgb");
-        std::filesystem::create_directories(outputPath + "/depth");
+        fs::create_directories(outputPath + "/rgb");
+        fs::create_directories(outputPath + "/depth");
         std::ostringstream ss;
         ss << std::setw(5) << std::setfill('0') << std::to_string(i*delta);
         auto fileNameColor = outputPath + "/rgb/" + ss.str() + ".png";

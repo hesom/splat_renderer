@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.10)
 project(splat_renderer)
 
 include(cmake/StringifyShaders.cmake)
