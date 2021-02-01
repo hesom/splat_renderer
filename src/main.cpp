@@ -35,10 +35,10 @@
 const int WIDTH = 640;
 const int HEIGHT = 480;
 
-const float FX = 528.0f;
-const float FY = 528.0f;
-const float CX = 320.0f;
-const float CY = 240.0f;
+const float FX = 481.2f;
+const float FY = -480.0f;
+const float CX = 319.5f;
+const float CY = 239.5f;
 
 // Near and far clipping planes in m
 const float NEAR = 0.01f;
