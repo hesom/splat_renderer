@@ -83,7 +83,7 @@ struct PointCloud
 
 std::string readFromFile(const std::string &path);
 void writeMat(const glm::mat4 &mat);
-PointCloud readPly(const std::string &filepath);
+PointCloud readPly(const std::string &filepath, float defaultPointSize);
 
 size_t initBuffers(const PointCloud &pcl);
 void initShaders();
@@ -121,7 +121,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         throw std::runtime_error("Failed to create window");
     }
 
-    auto pcl = readPly(pointcloudPath);
+    auto pcl = readPly(pointcloudPath, pointSize);
     auto trajectory = loadTrajectoryFromFile(trajectoryPath);
     std::vector<GLubyte*> rgbBuffers;
     std::vector<float*> depthBuffers;
@@ -612,7 +612,7 @@ void writeMat(const glm::mat4 &mat)
     std::cout << std::endl;
 }
 
-PointCloud readPly(const std::string &filepath)
+PointCloud readPly(const std::string &filepath, float defaultPointSize)
 {
     std::unique_ptr<std::istream> file_stream;
     std::vector<uint8_t> byte_buffer;
@@ -749,7 +749,7 @@ PointCloud readPly(const std::string &filepath)
 
         auto t5 = std::async(std::launch::async, [&]() {
             if(no_radius){
-                pcl.radius.assign(pcl.radius.size(), 1e-2f);
+                pcl.radius.assign(pcl.radius.size(), defaultPointSize);
             }else{
                 size_t numVerticesBytes = radius->buffer.size_bytes();
                 std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
