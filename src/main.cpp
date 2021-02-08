@@ -35,14 +35,16 @@
 const int WIDTH = 640;
 const int HEIGHT = 480;
 
-const float FX = 481.2f;
-const float FY = -480.0f;
-const float CX = 319.5f;
-const float CY = 239.5f;
+const float FX = 528.0f;
+const float FY = 528.0f;
+const float CX = 320.0f;
+const float CY = 240.0f;
 
 // Near and far clipping planes in m
 const float NEAR = 0.01f;
-const float FAR = 30.0f;
+const float FAR = 12.0f;
+
+const float DEPTH_SCALE = 1000.0f;
 
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void mouse_callback(GLFWwindow *window, double xpos, double ypos);
@@ -95,7 +97,7 @@ using namespace tinyply;
 namespace py = pybind11;
 namespace fs = std::experimental::filesystem;
 
-int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=25)
+int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=1, float pointSize=1e-2f)
 {
     GLFWwindow *window;
     
@@ -111,6 +113,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
     window = glfwCreateWindow(WIDTH, HEIGHT, "Splat Renderer", nullptr, nullptr);
     if (!window)
     {
@@ -147,6 +150,10 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
 
         // input
         processInput(window);
+        if(glfwWindowShouldClose(window)){
+            glfwTerminate();
+            return -1;
+        }
         // render
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -299,7 +306,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
                     d = 0.0f;
                 }
                 // d is not in meters so convert it to mm
-                d *= 1000;
+                d *= DEPTH_SCALE;
                 // we do not have sub milimeter accuracy so we can savely convert d to uint16_t
                 uint16_t bytes = d;
                 unsigned char lsb = bytes & 0xff;
@@ -710,7 +717,7 @@ PointCloud readPly(const std::string &filepath)
             size_t numVerticesBytes = position->buffer.size_bytes();
             std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
             std::transform(pcl.position.begin(), pcl.position.end(), pcl.position.begin(), [](float3 position) {
-                return float3{-position.x, position.y, position.z};
+                return float3{position.x, position.y, position.z};
             });
         });
 
@@ -718,7 +725,7 @@ PointCloud readPly(const std::string &filepath)
             size_t numVerticesBytes = normal->buffer.size_bytes();
             std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
             std::transform(pcl.normal.begin(), pcl.normal.end(), pcl.normal.begin(), [](float3 normal) {
-                return float3{-normal.x, normal.y, normal.z};
+                return float3{normal.x, normal.y, normal.z};
             });
         });
 
@@ -742,7 +749,7 @@ PointCloud readPly(const std::string &filepath)
 
         auto t5 = std::async(std::launch::async, [&]() {
             if(no_radius){
-                pcl.radius.assign(pcl.radius.size(), 1.0f);
+                pcl.radius.assign(pcl.radius.size(), 1e-2f);
             }else{
                 size_t numVerticesBytes = radius->buffer.size_bytes();
                 std::memcpy(pcl.radius.data(), radius->buffer.get(), numVerticesBytes);
@@ -767,33 +774,73 @@ PointCloud readPly(const std::string &filepath)
 
 std::vector<glm::mat4> loadTrajectoryFromFile(std::string path)
 {
-    std::vector<glm::mat4> trajectory;
-    std::ifstream ifs;
-    float timestamp, tx, ty, tz, qx, qy, qz, qw;
+    auto extension = path.substr(0, path.find("."));
 
-    ifs.open(path);
-    if (!ifs)
-    {
-        throw std::runtime_error("Unable to open trajectory file");
-        exit(1);
+    if(extension == "freiburg"){
+        std::vector<glm::mat4> trajectory;
+        std::ifstream ifs;
+        float timestamp, tx, ty, tz, qx, qy, qz, qw;
+
+        ifs.open(path);
+        if (!ifs)
+        {
+            throw std::runtime_error("Unable to open trajectory file");
+            exit(1);
+        }
+
+        // transform the trajectory into the right basis for our application
+        auto coordinateTransform = glm::mat4({-1.0f, 0.0f, 0.0f, 0.0f,
+                                            0.0f, 1.0f, 0.0f, 0.0f,
+                                            0.0f, 0.0f, -1.0f, 0.0f,
+                                            0.0f, 0.0f, 0.0f, 1.0f});
+
+        glm::mat4 firstTransform;
+        bool first = true;
+        while (ifs >> timestamp >> tx >> ty >> tz >> qx >> qy >> qz >> qw)
+        {
+            auto rotationQuat = glm::quat(qw, -qx, -qy, qz);
+            auto rotationMat = glm::transpose(glm::toMat4(rotationQuat));
+            auto translationMat = glm::translate(glm::mat4(1.0f), -glm::vec3(tx, ty, -tz));
+            auto transform = rotationMat * translationMat;
+            if(first){
+                firstTransform = glm::inverse(transform);
+                first = false;
+            }
+            trajectory.push_back(transform * coordinateTransform);
+        }
+
+        return trajectory;
+    }else{
+        std::vector<glm::mat4> trajectory;
+        std::ifstream ifs;
+        
+        ifs.open(path);
+        if (!ifs)
+        {
+            throw std::runtime_error("Unable to open trajectory file");
+            exit(1);
+        }
+
+        while(!ifs.eof()){
+            glm::mat4 m(1);
+
+            auto coordinateTransform = glm::mat4({ 1.0f, 0.0f, 0.0f, 0.0f,
+                                                   0.0f, 1.0f, 0.0f, 0.0f,
+                                                   0.0f, 0.0f, 1.0f, 0.0f,
+                                                   0.0f, 0.0f, 0.0f, 1.0f});
+            
+            ifs >> m[0][0] >> m[0][1] >> m[0][2] >> m[0][3];
+            ifs >> m[1][0] >> m[1][1] >> m[1][2] >> m[1][3]; 
+            ifs >> m[2][0] >> m[2][1] >> m[2][2] >> m[2][3];
+            ifs >> m[3][0] >> m[3][1] >> m[3][2] >> m[3][3];
+
+
+            trajectory.push_back(glm::transpose(glm::inverse(m*coordinateTransform)));
+        }
+
+        return trajectory;
     }
-
-    // transform the trajectory into the right basis for our application
-    auto coordinateTransform = glm::mat4({-1.0f, 0.0f, 0.0f, 0.0f,
-                                          0.0f, 1.0f, 0.0f, 0.0f,
-                                          0.0f, 0.0f, -1.0f, 0.0f,
-                                          0.0f, 0.0f, 0.0f, 1.0f});
-
-    while (ifs >> timestamp >> tx >> ty >> tz >> qx >> qy >> qz >> qw)
-    {
-        auto rotationQuat = glm::quat(qw, -qx, -qy, qz);
-        auto rotationMat = glm::transpose(glm::toMat4(rotationQuat));
-        auto translationMat = glm::translate(glm::mat4(1.0f), -glm::vec3(tx, ty, -tz));
-        auto transform = rotationMat * translationMat;
-        trajectory.push_back(transform * coordinateTransform);
-    }
-
-    return trajectory;
+    
 }
 
 PYBIND11_MODULE(splat_renderer, m) {
@@ -804,7 +851,7 @@ PYBIND11_MODULE(splat_renderer, m) {
     m.def("render", &render, R"pbdoc(
         Render a point cloud from a given camera trajectory and save the result in the output directory.
         Returns 0 if no errors were encountered. Throws runtime exceptions
-    )pbdoc", py::arg("pointcloud"), py::arg("trajectory"), py::arg("output"), py::arg("delta") = 25);
+    )pbdoc", py::arg("pointcloud"), py::arg("trajectory"), py::arg("output"), py::arg("delta") = 1, py::arg("pointSize")=1e-2);
 
     #ifdef VERSION_INFO
     m.attr("__version__") = VERSION_INFO;

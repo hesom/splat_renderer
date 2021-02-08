@@ -9,6 +9,7 @@ uniform mat4 projection;
 uniform mat4 view;
 
 out vec3 vColor;
+out vec4 vPos;
 
 mat4 rotationMatrix(vec3 axis, float angle)
 {
@@ -32,6 +33,8 @@ void main()
     // rotate each point such that the currOrientation and the target orientation (normal) align
     mat3 rot = mat3(rotationMatrix(axis, theta));
 
-    gl_Position = projection * view * vec4(rot*(radius*aPos) + offset, 1.0);
+    vPos = view * vec4(rot*(radius*aPos) + offset, 1.0);
+
+    gl_Position = projection * vPos;
     vColor = color;
 }
