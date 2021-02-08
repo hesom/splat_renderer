@@ -46,3 +46,7 @@ target_compile_definitions(${targetname} PRIVATE GLFW_INCLUDE_NONE)
 
 target_link_libraries(${targetname} PRIVATE ${OPENGL_gl_LIBRARY})
 target_link_libraries(${targetname} PRIVATE glfw tinyply)
+
+if (CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8.2)
+  target_link_libraries(${targetname} PRIVATE stdc++fs)
+endif()
