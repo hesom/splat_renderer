@@ -134,8 +134,8 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
     glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
+    //glEnable(GL_CULL_FACE);
+    //glCullFace(GL_BACK);
 
     const auto pointsPerCircle = initBuffers(pcl);
     initShaders();
