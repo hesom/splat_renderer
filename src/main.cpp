@@ -31,34 +31,13 @@
 #include "splat.vert.h"
 #include "splat.frag.h"
 
-// Camera params for projection
-const int WIDTH = 640;
-const int HEIGHT = 480;
-
-const float FX = 528.0f;
-const float FY = 528.0f;
-const float CX = 320.0f;
-const float CY = 240.0f;
-
 // Near and far clipping planes in m
 const float NEAR = 0.01f;
 const float FAR = 12.0f;
 
-const float DEPTH_SCALE = 1000.0f;
-
-void framebuffer_size_callback(GLFWwindow *window, int width, int height);
-void mouse_callback(GLFWwindow *window, double xpos, double ypos);
-void scroll_callback(GLFWwindow *window, double xoffset, double yoffset);
-void processInput(GLFWwindow *window);
 GLenum glCheckError_(const char *file, int line);
 #define glCheckError() glCheckError_(__FILE__, __LINE__)
 
-Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-double lastX = static_cast<double>(WIDTH) / 2.0;
-double lastY = static_cast<double>(HEIGHT) / 2.0;
-bool firstMouse = true;
-double deltaTime = 0.0f;
-double lastFrame = 0.0f;
 const size_t NUM_PBOS = 3;  //triple buffering
 
 GLuint vao;
@@ -85,7 +64,7 @@ std::string readFromFile(const std::string &path);
 void writeMat(const glm::mat4 &mat);
 PointCloud readPly(const std::string &filepath, float defaultPointSize);
 
-size_t initBuffers(const PointCloud &pcl);
+size_t initBuffers(const PointCloud &pcl, int width, int height);
 void initShaders();
 bool checkShader(GLuint shaderId, GLuint type);
 bool checkProgram(GLuint program);
@@ -97,7 +76,7 @@ using namespace tinyply;
 namespace py = pybind11;
 namespace fs = std::experimental::filesystem;
 
-int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=1, float pointSize=1e-2f)
+int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=1, float pointSize=1e-2f, int width = 640, int height=480, float fx=528.0f, float fy=528.0f, float cx=320.0f, float cy=240.0f, float depthScale=1000.0f)
 {
     GLFWwindow *window;
     
@@ -114,7 +93,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
-    window = glfwCreateWindow(WIDTH, HEIGHT, "Splat Renderer", nullptr, nullptr);
+    window = glfwCreateWindow(width, height, "Splat Renderer", nullptr, nullptr);
     if (!window)
     {
         glfwTerminate();
@@ -126,10 +105,6 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     std::vector<GLubyte*> rgbBuffers;
     std::vector<float*> depthBuffers;
 
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-    glfwSetCursorPosCallback(window, mouse_callback);
-    glfwSetScrollCallback(window, scroll_callback);
-
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
@@ -137,19 +112,13 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     //glEnable(GL_CULL_FACE);
     //glCullFace(GL_BACK);
 
-    const auto pointsPerCircle = initBuffers(pcl);
+    const auto pointsPerCircle = initBuffers(pcl, width, height);
     initShaders();
 
     size_t numDownloads = 0;
     size_t dx = 0;
     for (int frame = 0; frame<trajectory.size(); frame+=delta)
     {
-        double currentFrame = glfwGetTime();
-        deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
-
-        // input
-        processInput(window);
         if(glfwWindowShouldClose(window)){
             glfwTerminate();
             return -1;
@@ -158,18 +127,18 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glm::mat4 m(0.0f);
-        m[0][0] = 2.0f * FX / WIDTH;
+        m[0][0] = 2.0f * fx / width;
         m[0][1] = 0.0f;
         m[0][2] = 0.0f;
         m[0][3] = 0.0f;
 
         m[1][0] = 0.0f;
-        m[1][1] = -2.0f * FY / HEIGHT;
+        m[1][1] = -2.0f * fy / height;
         m[1][2] = 0.0f;
         m[1][3] = 0.0f;
 
-        m[2][0] = 1.0f - 2.0f * CX / WIDTH;
-        m[2][1] = 2.0f * CY / HEIGHT - 1.0f;
+        m[2][0] = 1.0f - 2.0f * cx / width;
+        m[2][1] = 2.0f * cy / height - 1.0f;
         m[2][2] = (FAR + NEAR) / (NEAR - FAR);
         m[2][3] = -1.0f;
 
@@ -189,9 +158,9 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         if (numDownloads < NUM_PBOS)
         {
             glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[dx]);
-            glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+            glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, 0);
             glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[dx]);
-            glReadPixels(0, 0, WIDTH, HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+            glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
         }
         else
         {
@@ -199,8 +168,8 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
             GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
             if (ptr)
             {
-                GLubyte* cpuBuffer = new GLubyte[3*WIDTH*HEIGHT];
-                memcpy(cpuBuffer, ptr, 3 * WIDTH * HEIGHT);
+                GLubyte* cpuBuffer = new GLubyte[3*width*height];
+                memcpy(cpuBuffer, ptr, 3 * width * height);
                 rgbBuffers.push_back(cpuBuffer);
                 glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
             }
@@ -208,14 +177,14 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
             {
                 std::cerr << "Could not map color PBO" << std::endl;
             }
-            glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+            glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, 0);
 
             glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[dx]);
             float* ptr2 = (float*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
             if (ptr2)
             {
-                float* cpuBuffer = new float[WIDTH * HEIGHT];
-                memcpy(cpuBuffer, ptr2, WIDTH * HEIGHT*sizeof(float));
+                float* cpuBuffer = new float[width * height];
+                memcpy(cpuBuffer, ptr2, width * height*sizeof(float));
                 depthBuffers.push_back(cpuBuffer);
                 glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
             }
@@ -223,7 +192,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
             {
                 std::cerr << "Could not map depth PBO" << std::endl;
             }
-            glReadPixels(0, 0, WIDTH, HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+            glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
         }
 
         dx = (dx + 1) % NUM_PBOS;
@@ -242,8 +211,8 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
         if (ptr)
         {
-            GLubyte* cpuBuffer = new GLubyte[3*WIDTH*HEIGHT];
-            memcpy(cpuBuffer, ptr, 3 * WIDTH * HEIGHT);
+            GLubyte* cpuBuffer = new GLubyte[3*width*height];
+            memcpy(cpuBuffer, ptr, 3 * width * height);
             rgbBuffers.push_back(cpuBuffer);
             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         }
@@ -251,14 +220,14 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         {
             std::cerr << "Could not map color PBO" << std::endl;
         }
-        glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, 0);
+        glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, 0);
 
         glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[dx]);
         float* ptr2 = (float*)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
         if (ptr2)
         {
-            float* cpuBuffer = new float[WIDTH * HEIGHT];
-            memcpy(cpuBuffer, ptr2, WIDTH * HEIGHT*sizeof(float));
+            float* cpuBuffer = new float[width * height];
+            memcpy(cpuBuffer, ptr2, width * height*sizeof(float));
             depthBuffers.push_back(cpuBuffer);
             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         }
@@ -279,21 +248,21 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
         auto fileNameDepth = outputPath + "/depth/" + ss.str() + ".png";
         std::async(std::launch::async, [&]() {
             // flip image
-            GLubyte* tmpColor = new GLubyte[WIDTH * HEIGHT * 3];
-            for (int row = 0; row < HEIGHT; row++)
+            GLubyte* tmpColor = new GLubyte[width * height * 3];
+            for (int row = 0; row < height; row++)
             {
-                memcpy(&tmpColor[row * WIDTH * 3], &rgbBuffers.at(i)[(HEIGHT - row-1) * WIDTH * 3], WIDTH*3);
+                memcpy(&tmpColor[row * width * 3], &rgbBuffers.at(i)[(height - row-1) * width * 3], width*3);
             }
-            lodepng::encode(fileNameColor, tmpColor, WIDTH, HEIGHT, LCT_RGB, 8U);
+            lodepng::encode(fileNameColor, tmpColor, width, height, LCT_RGB, 8U);
             delete[] tmpColor;
 
-            float* tmpDepth = new float[WIDTH * HEIGHT];
-            unsigned char* tmpDepthBytes = new unsigned char[WIDTH * HEIGHT * 2];
-            for (int row = 0; row < HEIGHT; row++)
+            float* tmpDepth = new float[width * height];
+            unsigned char* tmpDepthBytes = new unsigned char[width * height * 2];
+            for (int row = 0; row < height; row++)
             {
-                memcpy(&tmpDepth[row * WIDTH], &depthBuffers.at(i)[(HEIGHT - row - 1) * WIDTH], WIDTH * sizeof(float));
+                memcpy(&tmpDepth[row * width], &depthBuffers.at(i)[(height - row - 1) * width], width * sizeof(float));
             }
-            for (int j = 0; j < WIDTH * HEIGHT; j++)
+            for (int j = 0; j < width * height; j++)
             {
                 float d = tmpDepth[j];
                 if (d > 0.0f && d < 1.0f)
@@ -306,7 +275,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
                     d = 0.0f;
                 }
                 // d is not in meters so convert it to mm
-                d *= DEPTH_SCALE;
+                d *= depthScale;
                 // we do not have sub milimeter accuracy so we can savely convert d to uint16_t
                 uint16_t bytes = d;
                 unsigned char lsb = bytes & 0xff;
@@ -314,7 +283,7 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
                 tmpDepthBytes[2*j + 0] = msb;
                 tmpDepthBytes[2*j + 1] = lsb;
             }
-            lodepng::encode(fileNameDepth, tmpDepthBytes, WIDTH, HEIGHT, LCT_GREY, 16U);
+            lodepng::encode(fileNameDepth, tmpDepthBytes, width, height, LCT_GREY, 16U);
             delete[] tmpDepth;
             delete[] tmpDepthBytes;
             }
@@ -367,7 +336,7 @@ std::string readFromFile(const std::string &path)
     return content;
 }
 
-size_t initBuffers(const PointCloud &pcl)
+size_t initBuffers(const PointCloud &pcl, int width, int height)
 {
     auto circle = buildCircle(100, 1.0f);
 
@@ -419,13 +388,13 @@ size_t initBuffers(const PointCloud &pcl)
     // Set up pbos for efficient pixel transfers
     glGenBuffers(NUM_PBOS, colorPbos);
     glGenBuffers(NUM_PBOS, depthPbos);
-    int nbytes = WIDTH * HEIGHT * 3;
+    int nbytes = width * height * 3;
     for (int i = 0; i < NUM_PBOS; i++)
     {
         glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[i]);
         glBufferData(GL_PIXEL_PACK_BUFFER, nbytes, nullptr, GL_STREAM_READ);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, depthPbos[i]);
-        glBufferData(GL_PIXEL_PACK_BUFFER, WIDTH*HEIGHT*sizeof(float), nullptr, GL_STREAM_READ);
+        glBufferData(GL_PIXEL_PACK_BUFFER, width*height*sizeof(float), nullptr, GL_STREAM_READ);
     }
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
@@ -519,53 +488,6 @@ std::vector<float> buildCircle(int fans, float radius)
     }
 
     return vertices;
-}
-
-void processInput(GLFWwindow *window)
-{
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, true);
-
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        camera.ProcessKeyboard(FORWARD, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        camera.ProcessKeyboard(BACKWARD, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        camera.ProcessKeyboard(LEFT, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        camera.ProcessKeyboard(RIGHT, deltaTime);
-}
-
-void framebuffer_size_callback(GLFWwindow *window, int width, int height)
-{
-    // make sure the viewport matches the new window dimensions; note that width and
-    // height will be significantly larger than specified on retina displays.
-    glViewport(0, 0, width, height);
-}
-
-void mouse_callback(GLFWwindow *window, double xpos, double ypos)
-{
-    if (firstMouse)
-    {
-        lastX = xpos;
-        lastY = ypos;
-        firstMouse = false;
-    }
-
-    double xoffset = xpos - lastX;
-    double yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
-
-    lastX = xpos;
-    lastY = ypos;
-
-    camera.ProcessMouseMovement(xoffset, yoffset);
-}
-
-// glfw: whenever the mouse scroll wheel scrolls, this callback is called
-// ----------------------------------------------------------------------
-void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
-{
-    camera.ProcessMouseScroll(yoffset);
 }
 
 GLenum glCheckError_(const char *file, int line)
@@ -851,7 +773,9 @@ PYBIND11_MODULE(splat_renderer, m) {
     m.def("render", &render, R"pbdoc(
         Render a point cloud from a given camera trajectory and save the result in the output directory.
         Returns 0 if no errors were encountered. Throws runtime exceptions
-    )pbdoc", py::arg("pointcloud"), py::arg("trajectory"), py::arg("output"), py::arg("delta") = 1, py::arg("pointSize")=1e-2);
+    )pbdoc", py::arg("pointcloud"), py::arg("trajectory"), py::arg("output"), py::arg("delta") = 1, py::arg("pointSize")=1e-2, 
+             py::arg("width")=640, py::arg("height")=480, py::arg("fx")=520.0, py::arg("fy")=528.0, py::arg("cx")=320.0, py::arg("cy")=240.0,
+             py::arg("depthScale")=1000.0);
 
     #ifdef VERSION_INFO
     m.attr("__version__") = VERSION_INFO;
