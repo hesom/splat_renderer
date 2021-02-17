@@ -637,7 +637,16 @@ PointCloud readPly(const std::string &filepath, float defaultPointSize)
 
         auto t1 = std::async(std::launch::async, [&]() {
             size_t numVerticesBytes = position->buffer.size_bytes();
-            std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
+            if(position->t == tinyply::Type::FLOAT64){
+                std::vector<double3> tmp_buffer;
+                tmp_buffer.resize(position->count);
+                std::memcpy(tmp_buffer.data(), position->buffer.get(), numVerticesBytes);
+                std::transform(tmp_buffer.begin(), tmp_buffer.end(), pcl.position.begin(), [](double3 position){
+                    return float3{(float)position.x, (float)position.y, (float)position.z};
+                });
+            }else{
+                std::memcpy(pcl.position.data(), position->buffer.get(), numVerticesBytes);
+            }
             std::transform(pcl.position.begin(), pcl.position.end(), pcl.position.begin(), [](float3 position) {
                 return float3{position.x, position.y, position.z};
             });
@@ -645,7 +654,16 @@ PointCloud readPly(const std::string &filepath, float defaultPointSize)
 
         auto t2 = std::async(std::launch::async, [&]() {
             size_t numVerticesBytes = normal->buffer.size_bytes();
-            std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
+            if(normal->t == tinyply::Type::FLOAT64){
+                std::vector<double3> tmp_buffer;
+                tmp_buffer.resize(normal->count);
+                std::memcpy(tmp_buffer.data(), normal->buffer.get(), numVerticesBytes);
+                std::transform(tmp_buffer.begin(), tmp_buffer.end(), pcl.normal.begin(), [](double3 normal){
+                    return float3{(float)normal.x, (float)normal.y, (float)normal.z};
+                });
+            }else{
+                std::memcpy(pcl.normal.data(), normal->buffer.get(), numVerticesBytes);
+            }
             std::transform(pcl.normal.begin(), pcl.normal.end(), pcl.normal.begin(), [](float3 normal) {
                 return float3{normal.x, normal.y, normal.z};
             });
