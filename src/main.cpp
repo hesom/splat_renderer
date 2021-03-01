@@ -29,7 +29,13 @@
 #include "utils.h"
 #include "lodepng.h"
 #include "splat.vert.h"
+#include "ewasplat.vert.h"
 #include "splat.frag.h"
+#include "visibility.frag.h"
+#include "visibility.vert.h"
+#include "splatcount.frag.h"
+#include "final.frag.h"
+#include "fullscreenquad.vert.h"
 
 // Near and far clipping planes in m
 const float NEAR = 0.01f;
@@ -50,6 +56,19 @@ GLuint colorPbos[NUM_PBOS];
 GLuint depthPbos[NUM_PBOS];
 GLuint program;
 
+// EWA specific resources
+GLuint visibilityPassProgram;
+GLuint splatcountProgram;
+GLuint finalPassProgram;
+GLuint fbo;
+GLuint quadVao;
+GLuint quadVbo;
+GLuint depthBuffer;
+GLuint depthAccTexture;
+GLuint colorAccTexture;
+GLuint normalTexture;
+GLuint counterTexture;
+
 struct PointCloud
 {
     std::vector<float3> position;
@@ -66,8 +85,10 @@ PointCloud readPly(const std::string &filepath, float defaultPointSize);
 
 size_t initBuffers(const PointCloud &pcl, int width, int height);
 void initShaders();
+void initEWAShaders();
 bool checkShader(GLuint shaderId, GLuint type);
 bool checkProgram(GLuint program);
+void initEWASpecificBuffers(int width, int height);
 
 std::vector<float> buildCircle(int fans, float radius);
 std::vector<glm::mat4> loadTrajectoryFromFile(std::string path);
@@ -76,7 +97,9 @@ using namespace tinyply;
 namespace py = pybind11;
 namespace fs = std::experimental::filesystem;
 
-int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=1, float pointSize=1e-2f, int width = 640, int height=480, float fx=528.0f, float fy=528.0f, float cx=320.0f, float cy=240.0f, float depthScale=1000.0f)
+int render(std::string pointcloudPath, std::string trajectoryPath, std::string outputPath, int delta=1, float pointSize=1e-2f,
+    int width = 640, int height=480, float fx=528.0f, float fy=528.0f, float cx=320.0f, float cy=240.0f,
+    float depthScale=1000.0f, std::string method="standard", float surfaceThickness=0.1f)
 {
     GLFWwindow *window;
     
@@ -113,7 +136,13 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     //glCullFace(GL_BACK);
 
     const auto pointsPerCircle = initBuffers(pcl, width, height);
-    initShaders();
+    if(method=="ewa" || method=="EWA")
+    {
+        initEWASpecificBuffers(width, height);
+        initEWAShaders();
+    }else{
+        initShaders();
+    }
 
     size_t numDownloads = 0;
     size_t dx = 0;
@@ -149,12 +178,90 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
 
         auto projection = m;
         auto view = trajectory.at(frame);
-        glUseProgram(program);
-        glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(projection[0]));
-        glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(view[0]));
 
-        glBindVertexArray(vao);
-        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, pointsPerCircle, pcl.size);
+        if(method=="ewa" || method=="EWA")
+        {   
+            // VISIBILITY PASS
+            {
+                glEnable(GL_DEPTH_TEST);
+                glDepthMask(GL_TRUE);
+                glUseProgram(visibilityPassProgram);
+                auto modelviewLoc = glGetUniformLocation(visibilityPassProgram, "modelview");
+                glUniformMatrix4fv(modelviewLoc, 1, GL_FALSE, glm::value_ptr(view[0]));
+                auto projectionLoc = glGetUniformLocation(visibilityPassProgram, "projection");
+                glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection[0]));
+                auto epsilonLoc = glGetUniformLocation(visibilityPassProgram, "epsilon");
+                glUniform1f(epsilonLoc, surfaceThickness);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                glDrawBuffer(GL_COLOR_ATTACHMENT0);
+                glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+                glBindVertexArray(vao);
+                glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, pointsPerCircle, pcl.size);
+                glCheckError();
+            }
+
+            // ACCUMULATION PASS
+            {
+                glUseProgram(splatcountProgram);
+                auto modelviewLoc = glGetUniformLocation(splatcountProgram, "modelview");
+                glUniformMatrix4fv(modelviewLoc, 1, GL_FALSE, glm::value_ptr(view[0]));
+                auto projectionLoc = glGetUniformLocation(splatcountProgram, "projection");
+                glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection[0]));
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                glDepthMask(GL_FALSE);
+                glEnable(GL_BLEND);
+                glBlendEquationSeparate(GL_FUNC_ADD, GL_MIN);
+                glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
+                GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+                glDrawBuffers(3, drawBuffers);
+                glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, pointsPerCircle, pcl.size);
+                glDisable(GL_BLEND);
+                glDepthMask(GL_TRUE);
+                glCheckError();
+            }
+
+            // INTERPOLATION PASS
+            {
+                glUseProgram(finalPassProgram);
+                auto nearLoc = glGetUniformLocation(finalPassProgram, "near");
+                glUniform1f(nearLoc, NEAR);
+                auto farLoc = glGetUniformLocation(finalPassProgram, "far");
+                glUniform1f(farLoc, FAR);
+                auto colorLoc = glGetUniformLocation(finalPassProgram, "colorAccTexture");
+                glUniform1i(colorLoc, 0);
+                auto depthLoc = glGetUniformLocation(finalPassProgram, "depthAccTexture");
+                glUniform1i(depthLoc, 1);
+                auto counterLoc = glGetUniformLocation(finalPassProgram, "counterTexture");
+                glUniform1i(counterLoc, 2);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                glDisable(GL_CULL_FACE);
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, colorAccTexture);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, depthAccTexture);
+                glActiveTexture(GL_TEXTURE2);
+                glBindTexture(GL_TEXTURE_2D, counterTexture);
+
+                glBindVertexArray(quadVao);
+                glDepthFunc(GL_ALWAYS); // enables us to still write to depth buffer
+                glDrawArrays(GL_TRIANGLES, 0, 6);
+                glCheckError();
+                glDepthFunc(GL_LESS);
+                glDisable(GL_DEPTH_TEST);
+            }
+        }else{
+            glUseProgram(program);
+            glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, glm::value_ptr(projection[0]));
+            glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, glm::value_ptr(view[0]));
+
+            glBindVertexArray(vao);
+            glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, pointsPerCircle, pcl.size);
+        }
         if (numDownloads < NUM_PBOS)
         {
             glBindBuffer(GL_PIXEL_PACK_BUFFER, colorPbos[dx]);
@@ -240,11 +347,11 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     }
     
     for (int i = 0; i < rgbBuffers.size(); i++) {
-        fs::create_directories(outputPath + "/rgb");
+        fs::create_directories(outputPath + "/debug");
         fs::create_directories(outputPath + "/depth");
         std::ostringstream ss;
         ss << std::setw(5) << std::setfill('0') << std::to_string(i*delta);
-        auto fileNameColor = outputPath + "/rgb/" + ss.str() + ".png";
+        auto fileNameColor = outputPath + "/debug/" + ss.str() + ".png";
         auto fileNameDepth = outputPath + "/depth/" + ss.str() + ".png";
         std::async(std::launch::async, [&]() {
             // flip image
@@ -299,6 +406,21 @@ int render(std::string pointcloudPath, std::string trajectoryPath, std::string o
     glDeleteBuffers(NUM_PBOS, colorPbos);
     glDeleteBuffers(NUM_PBOS, depthPbos);
     glDeleteVertexArrays(1, &vao);
+
+    if(method == "ewa" || method == "EWA"){
+        glDeleteProgram(finalPassProgram);
+        glDeleteProgram(visibilityPassProgram);
+
+        glDeleteBuffers(1, &quadVbo);
+        glDeleteVertexArrays(1, &quadVao);
+
+        glDeleteTextures(1, &colorAccTexture);
+        glDeleteTextures(1, &depthAccTexture);
+        glDeleteTextures(1, &normalTexture);
+        glDeleteTextures(1, &counterTexture);
+        glDeleteRenderbuffers(1, &depthBuffer);
+        glDeleteFramebuffers(1, &fbo);
+    }
 
     glfwTerminate();
 
@@ -401,6 +523,62 @@ size_t initBuffers(const PointCloud &pcl, int width, int height)
     return num_points;
 }
 
+void initEWASpecificBuffers(int width, int height)
+{
+    // Texture for depth accumulation pass
+    glGenTextures(1, &depthAccTexture);
+    glBindTexture(GL_TEXTURE_2D, depthAccTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+    // Texture for color accumulation pass
+    glGenTextures(1, &colorAccTexture);
+    glBindTexture(GL_TEXTURE_2D, colorAccTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+    // Counter texture for normalization
+    glGenTextures(1, &counterTexture);
+    glBindTexture(GL_TEXTURE_2D, counterTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenRenderbuffers(1, &depthBuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, depthBuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorAccTexture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, counterTexture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, depthAccTexture, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // quad for screen-space computations in fragment shader
+    glGenVertexArrays(1, &quadVao);
+    glBindVertexArray(quadVao);
+    glGenBuffers(1, &quadVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, quadVbo);
+    float quadVertices[] = {// positions   // texCoords
+                            -1.0f, 1.0f, 0.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f,
+
+                            -1.0f, 1.0f, 0.0f, 1.0f, 1.0f,  -1.0f, 1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f};
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
+
+    glBindVertexArray(0);
+}
+
 void initShaders()
 {
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -435,6 +613,121 @@ void initShaders()
     glDetachShader(program, fragmentShader);
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
+}
+
+void initEWAShaders()
+{
+    // -------- VISIBILITY PASS ------------
+    {
+        auto vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        auto vertexSourceStr = std::string(VISIBILITY_VERT_STR);
+        const char *vertexSource = vertexSourceStr.c_str();
+        glShaderSource(vertexShader, 1, &vertexSource, nullptr);
+        glCompileShader(vertexShader);
+        if (!checkShader(vertexShader, GL_VERTEX_SHADER))
+        {
+            throw std::runtime_error("Visibility vertex shader compilation failed");
+        }
+
+        auto fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        auto fragmentSourceStr = std::string(VISIBILITY_FRAG_STR);
+        const char *fragmentSource = fragmentSourceStr.c_str();
+        glShaderSource(fragmentShader, 1, &fragmentSource, nullptr);
+        glCompileShader(fragmentShader);
+        if (!checkShader(fragmentShader, GL_FRAGMENT_SHADER)) {
+            throw std::runtime_error("Visibility fragment shader compilation failed");
+        }
+
+        visibilityPassProgram = glCreateProgram();
+        glAttachShader(visibilityPassProgram, vertexShader);
+        glAttachShader(visibilityPassProgram, fragmentShader);
+        glLinkProgram(visibilityPassProgram);
+
+        if(!checkProgram(visibilityPassProgram))
+        {
+            throw std::runtime_error("Visibility shader linking failed");
+        }
+
+        glDetachShader(visibilityPassProgram, vertexShader);
+        glDetachShader(visibilityPassProgram, fragmentShader);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
+    // -----------------------------------------
+
+    // ----------ACCUMULATION COUNT PASS--------------
+    {
+        auto vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        auto vertexSourceStr = std::string(EWASPLAT_VERT_STR);
+        const char *vertexSource = vertexSourceStr.c_str();
+        glShaderSource(vertexShader, 1, &vertexSource, nullptr);
+        glCompileShader(vertexShader);
+        if (!checkShader(vertexShader, GL_VERTEX_SHADER))
+        {
+            throw std::runtime_error("Accumulation vertex shader compilation failed");
+        }
+
+        auto fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        auto fragmentSourceStr = std::string(SPLATCOUNT_FRAG_STR);
+        const char *fragmentSource = fragmentSourceStr.c_str();
+        glShaderSource(fragmentShader, 1, &fragmentSource, nullptr);
+        glCompileShader(fragmentShader);
+        if (!checkShader(fragmentShader, GL_FRAGMENT_SHADER)) {
+            throw std::runtime_error("Accumulation fragment shader compilation failed");
+        }
+
+        splatcountProgram = glCreateProgram();
+        glAttachShader(splatcountProgram, vertexShader);
+        glAttachShader(splatcountProgram, fragmentShader);
+        glLinkProgram(splatcountProgram);
+
+        if(!checkProgram(splatcountProgram))
+        {
+            throw std::runtime_error("Accumulation shader linking failed");
+        }
+
+        glDetachShader(splatcountProgram, vertexShader);
+        glDetachShader(splatcountProgram, fragmentShader);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
+
+    // ----------INTERPOLATION PASS -----------------
+    {
+        auto vertexShader = glCreateShader(GL_VERTEX_SHADER);
+        auto vertexSourceStr = std::string(FULLSCREENQUAD_VERT_STR);
+        const char *vertexSource = vertexSourceStr.c_str();
+        glShaderSource(vertexShader, 1, &vertexSource, nullptr);
+        glCompileShader(vertexShader);
+        if (!checkShader(vertexShader, GL_VERTEX_SHADER))
+        {
+            throw std::runtime_error("Interpolation vertex shader compilation failed");
+        }
+
+        auto fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+        auto fragmentSourceStr = std::string(FINAL_FRAG_STR);
+        const char *fragmentSource = fragmentSourceStr.c_str();
+        glShaderSource(fragmentShader, 1, &fragmentSource, nullptr);
+        glCompileShader(fragmentShader);
+        if (!checkShader(fragmentShader, GL_FRAGMENT_SHADER)) {
+            throw std::runtime_error("Interpolation fragment shader compilation failed");
+        }
+
+        finalPassProgram = glCreateProgram();
+        glAttachShader(finalPassProgram, vertexShader);
+        glAttachShader(finalPassProgram, fragmentShader);
+        glLinkProgram(finalPassProgram);
+
+        if(!checkProgram(finalPassProgram))
+        {
+            throw std::runtime_error("Interpolation shader linking failed");
+        }
+
+        glDetachShader(finalPassProgram, vertexShader);
+        glDetachShader(finalPassProgram, fragmentShader);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    }
 }
 
 bool checkShader(GLuint shaderId, GLuint type)
@@ -793,7 +1086,7 @@ PYBIND11_MODULE(splat_renderer, m) {
         Returns 0 if no errors were encountered. Throws runtime exceptions
     )pbdoc", py::arg("pointcloud"), py::arg("trajectory"), py::arg("output"), py::arg("delta") = 1, py::arg("pointSize")=1e-2, 
              py::arg("width")=640, py::arg("height")=480, py::arg("fx")=520.0, py::arg("fy")=528.0, py::arg("cx")=320.0, py::arg("cy")=240.0,
-             py::arg("depthScale")=1000.0);
+             py::arg("depthScale")=1000.0, py::arg("method")="standard", py::arg("surfaceThickness")=0.1);
 
     #ifdef VERSION_INFO
     m.attr("__version__") = VERSION_INFO;

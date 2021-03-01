@@ -23,8 +23,26 @@ add_subdirectory(${LIB_ROOT_DIR}/pybind11)
 file(GLOB_RECURSE SRC "src/*.cpp" "src/*.c" "src/*.h" "src/shaders/*")
 
 set(SHADER_DIR ${CMAKE_SOURCE_DIR}/src/shaders)
-stringify_shaders(splat.vert splat.frag)
-set(GENERATED_HEADERS ${GENERATED_HEADER_DIR}/splat.vert.h ${GENERATED_HEADER_DIR}/splat.frag.h)
+stringify_shaders(
+  splat.vert
+  splat.frag
+  ewasplat.vert
+  final.frag
+  fullscreenquad.vert
+  splatcount.frag
+  visibility.vert
+  visibility.frag
+)
+set(GENERATED_HEADERS
+  ${GENERATED_HEADER_DIR}/splat.vert.h
+  ${GENERATED_HEADER_DIR}/splat.frag.h
+  ${GENERATED_HEADER_DIR}/ewasplat.vert.h
+  ${GENERATED_HEADER_DIR}/final.frag.h
+  ${GENERATED_HEADER_DIR}/fullscreenquad.vert.h
+  ${GENERATED_HEADER_DIR}/splatcount.frag.h
+  ${GENERATED_HEADER_DIR}/visibility.vert.h
+  ${GENERATED_HEADER_DIR}/visibility.frag.h
+)
 
 pybind11_add_module(${targetname} ${SRC} ${GENERATED_HEADERS})
 set_property(TARGET ${targetname} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
