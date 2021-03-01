@@ -14,7 +14,7 @@ from splat_renderer import render
 
 try:
   # only render every 25th camera position and point radius of 1cm
-  render('point_cloud.ply', 'trajectory.freiburg', 'output_dir', delta=25, pointSize=1e-2)
+  render('point_cloud.ply', 'trajectory.freiburg', 'output_dir', delta=25, pointSize=1e-2, method="ewa", surfaceThickness=0.1)
 except Exception as e:
   print(e)
 ```
